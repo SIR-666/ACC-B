@@ -1,18 +1,18 @@
-import mysql from "mysql";
+const mysql = require("mysql");
 
 const db = mysql.createConnection({
-  host: "localhost",
-  user: "accm5651_caksyu",
-  password: "970008F#m",
-  database: "accm5651_Accounting"
+    host: "localhost",
+    user: "accm5651_caksyu",
+    password: "970008F#m",
+    database: "accm5651_Accounting"
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error("Koneksi gagal:", err);
-  } else {
-    console.log("MySQL Connected!");
-  }
+db.connect(err => {
+    if (err) {
+        console.error("Koneksi gagal:", err);
+    } else {
+        console.log("MySQL Connected!");
+    }
 });
 
-export default db;
+module.exports = db;
