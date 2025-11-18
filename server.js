@@ -7,12 +7,12 @@ app.use(cors());
 app.use(express.json());
 
 // API health-check basic
-app.get("/", (req, res) => {
+app.get("/ACC-B", (req, res) => {
     res.json({ status: "OK", message: "Server is running" });
 });
 
 // API check MySQL
-app.get("/check-db", (req, res) => {
+app.get("/ACC-B/check-db", (req, res) => {
     db.query("SELECT 1 + 1 AS result", (err, rows) => {
         if (err) {
             return res.status(500).json({
