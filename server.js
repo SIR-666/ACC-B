@@ -7,7 +7,7 @@ const routes = require("./routes/routes");
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use("/api", routes);
+app.use("/ACC-B", routes);
 
 app.get("/ACC-B", (req, res) => {
   res.json({ status: "OK", message: "Server is running" });
