@@ -8,6 +8,9 @@ router.get("/", ctrl.getAll);
 // GET /api/accounting/totals     
 router.get("/totals", ctrl.getTotals);
 
+// GET /api/accounting/totals/:tipe
+router.get("/totals/:tipe", ctrl.getTotalsByType);
+
 // GET /api/accounting/:id        
 router.get("/:id", ctrl.getById);
 

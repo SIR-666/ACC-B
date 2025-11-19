@@ -18,35 +18,35 @@ async function withConnection(fn) {
 }
 
 async function getAll(options = {}) {
+  const page = Number(options.page) > 0 ? Number(options.page) : 1;
+  const limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
+  const offset = (page - 1) * limit;
+
+  const where = [];
+  const params = [];
+
+  if (options.tipe) {
+    where.push("tipe_keuangan = ?");
+    params.push(options.tipe);
+  }
+  if (options.startDate) {
+    where.push("(tanggal_uang_masuk >= ? OR tanggal_uang_keluar >= ?)");
+    params.push(options.startDate, options.startDate);
+  }
+  if (options.endDate) {
+    where.push("(tanggal_uang_masuk <= ? OR tanggal_uang_keluar <= ?)");
+    params.push(options.endDate, options.endDate);
+  }
+  if (options.search) {
+    where.push("(keterangan LIKE ?)");
+    params.push(`%${options.search}%`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const sql = `SELECT * FROM \`${TABLE}\` ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
   try {
-    const page = Number(options.page) > 0 ? Number(options.page) : 1;
-    const limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
-    const offset = (page - 1) * limit;
-
-    const where = [];
-    const params = [];
-
-    if (options.tipe) {
-      where.push("tipe_keuangan = ?");
-      params.push(options.tipe);
-    }
-    if (options.startDate) {
-      where.push("(tanggal_uang_masuk >= ? OR tanggal_uang_keluar >= ?)");
-      params.push(options.startDate, options.startDate);
-    }
-    if (options.endDate) {
-      where.push("(tanggal_uang_masuk <= ? OR tanggal_uang_keluar <= ?)");
-      params.push(options.endDate, options.endDate);
-    }
-    if (options.search) {
-      where.push("(keterangan LIKE ?)");
-      params.push(`%${options.search}%`);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const sql = `SELECT * FROM \`${TABLE}\` ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
     return await withConnection((q) => q(sql, params));
   } catch (error) {
     console.error("Error fetching accounting list:", error);
@@ -66,8 +66,43 @@ async function getById(id) {
   }
 }
 
+async function getBalanceByType(tipe) {
+  const where = tipe ? "WHERE tipe_keuangan = ?" : "";
+  const params = tipe ? [tipe] : [];
+  const sql = `
+    SELECT 
+      IFNULL(SUM(uang_masuk),0) AS total_masuk,
+      IFNULL(SUM(uang_keluar),0) AS total_keluar,
+      IFNULL(SUM(uang_masuk) - SUM(uang_keluar), 0) AS balance
+    FROM \`${TABLE}\`
+    ${where}
+  `;
+  try {
+    const rows = await withConnection((q) => q(sql, params));
+    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
+  } catch (error) {
+    console.error("Error fetching balance by type:", error);
+    throw error;
+  }
+}
+
 async function create(record) {
   try {
+    const amountIn = Number(record.uang_masuk) || 0;
+    const amountOut = Number(record.uang_keluar) || 0;
+    const tipe = record.tipe_keuangan || null;
+
+    if (amountOut > 0 && tipe) {
+      const bal = await getBalanceByType(tipe);
+      if (bal.balance < amountOut) {
+        const err = new Error(
+          `Saldo tidak cukup untuk tipe '${tipe}'. Saldo saat ini: ${bal.balance}`
+        );
+        err.code = "INSUFFICIENT_FUNDS";
+        throw err;
+      }
+    }
+
     const fields = [
       "uang_masuk",
       "uang_keluar",
@@ -78,11 +113,11 @@ async function create(record) {
       "created_at",
     ];
     const values = [
-      record.uang_masuk || 0,
-      record.uang_keluar || 0,
+      amountIn,
+      amountOut,
       record.tanggal_uang_masuk || null,
       record.tanggal_uang_keluar || null,
-      record.tipe_keuangan || null,
+      tipe,
       record.keterangan || null,
       record.created_at || new Date(),
     ];
@@ -160,23 +195,38 @@ async function getTotals(options = {}) {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const sql = `SELECT IFNULL(SUM(uang_masuk),0) AS total_masuk, IFNULL(SUM(uang_keluar),0) AS total_keluar FROM \`${TABLE}\` ${whereSql}`;
+    const sql = `
+      SELECT
+        IFNULL(SUM(uang_masuk),0) AS total_masuk,
+        IFNULL(SUM(uang_keluar),0) AS total_keluar,
+        IFNULL(SUM(uang_masuk) - SUM(uang_keluar),0) AS balance
+      FROM \`${TABLE}\`
+      ${whereSql}
+    `;
     const rows = await withConnection((q) => q(sql, params));
-    return rows[0] || { total_masuk: 0, total_keluar: 0 };
+    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
   } catch (error) {
     console.error("Error fetching totals:", error);
     throw error;
   }
 }
 
-async function getDataByType(type) {
+async function getTotalsByType(tipe) {
   try {
     const rows = await withConnection((q) =>
-      q(`SELECT * FROM \`${TABLE}\` WHERE type = ?`, [type])
+      q(
+        `SELECT
+           IFNULL(SUM(uang_masuk),0) AS total_masuk,
+           IFNULL(SUM(uang_keluar),0) AS total_keluar,
+           IFNULL(SUM(uang_masuk) - SUM(uang_keluar),0) AS balance
+         FROM \`${TABLE}\`
+         WHERE tipe_keuangan = ?`,
+        [tipe]
+      )
     );
-    return rows[0] || null;
+    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
   } catch (error) {
-    console.error("Error fetching accounting by id:", error);
+    console.error("Error fetching totals by type:", error);
     throw error;
   }
 }
@@ -188,5 +238,6 @@ module.exports = {
   update,
   remove,
   getTotals,
-  getDataByType
+  getTotalsByType,
+  getBalanceByType,
 };

@@ -81,9 +81,16 @@ async function getTotals(req, res) {
   }
 }
 
-// async function getDataByType(req, res){
-
-// }
+async function getTotalsByType(req, res) {
+  try {
+    const tipe = req.params.tipe;
+    const totals = await service.getTotalsByType(tipe);
+    res.json({ data: totals });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
 module.exports = {
   getAll,
@@ -91,5 +98,6 @@ module.exports = {
   create,
   update,
   remove,
-  getTotals
+  getTotals,
+  getTotalsByType
 };
