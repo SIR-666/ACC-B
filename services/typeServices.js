@@ -18,13 +18,13 @@ async function create(record) {
 }
 
 async function findAll() {
-  const sql = `SELECT tipe FROM \`${TABLE}\``;
+  const sql = `SELECT * FROM \`${TABLE}\``;
   const results = await query(sql);
   return results;
 }
 
 async function findById(id) {
-  const sql = `SELECT tipe FROM \`${TABLE}\` WHERE id = ?`;
+  const sql = `SELECT * FROM \`${TABLE}\` WHERE id = ?`;
   const params = [id];
   const results = await query(sql, params);
   return results[0];
