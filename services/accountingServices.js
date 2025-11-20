@@ -2,6 +2,7 @@ const db = require("../config/db");
 const util = require("util");
 
 const TABLE = "keuangan";
+const TYPE_TABLE = "tipe_keuangan";
 
 async function withConnection(fn) {
   const conn = await new Promise((resolve, reject) => {
@@ -9,9 +10,14 @@ async function withConnection(fn) {
       err ? reject(err) : resolve(connection)
     );
   });
+
   const query = util.promisify(conn.query).bind(conn);
+  const beginTransaction = util.promisify(conn.beginTransaction).bind(conn);
+  const commit = util.promisify(conn.commit).bind(conn);
+  const rollback = util.promisify(conn.rollback).bind(conn);
+
   try {
-    return await fn(query);
+    return await fn(query, { conn, beginTransaction, commit, rollback });
   } finally {
     conn.release();
   }
@@ -26,28 +32,37 @@ async function getAll(options = {}) {
   const params = [];
 
   if (options.tipe) {
-    where.push("tipe_keuangan = ?");
+    where.push("k.tipe_keuangan = ?");
     params.push(options.tipe);
   }
   if (options.startDate) {
-    where.push("(tanggal_uang_masuk >= ? OR tanggal_uang_keluar >= ?)");
+    where.push("(k.tanggal_uang_masuk >= ? OR k.tanggal_uang_keluar >= ?)");
     params.push(options.startDate, options.startDate);
   }
   if (options.endDate) {
-    where.push("(tanggal_uang_masuk <= ? OR tanggal_uang_keluar <= ?)");
+    where.push("(k.tanggal_uang_masuk <= ? OR k.tanggal_uang_keluar <= ?)");
     params.push(options.endDate, options.endDate);
   }
   if (options.search) {
-    where.push("(keterangan LIKE ?)");
+    where.push("(k.keterangan LIKE ?)");
     params.push(`%${options.search}%`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const sql = `SELECT * FROM \`${TABLE}\` ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+
+  const sql = `
+    SELECT k.*, t.tipe AS tipe_label
+    FROM \`${TABLE}\` k
+    LEFT JOIN \`${TYPE_TABLE}\` t ON k.tipe_keuangan = t.id
+    ${whereSql}
+    ORDER BY k.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
   params.push(limit, offset);
 
   try {
-    return await withConnection((q) => q(sql, params));
+    const rows = await withConnection((q) => q(sql, params));
+    return rows;
   } catch (error) {
     console.error("Error fetching accounting list:", error);
     throw error;
@@ -56,9 +71,13 @@ async function getAll(options = {}) {
 
 async function getById(id) {
   try {
-    const rows = await withConnection((q) =>
-      q(`SELECT * FROM \`${TABLE}\` WHERE id = ? LIMIT 1`, [id])
-    );
+    const sql = `
+      SELECT k.*, t.tipe AS tipe_label
+      FROM \`${TABLE}\` k
+      LEFT JOIN \`${TYPE_TABLE}\` t ON k.tipe_keuangan = t.id
+      WHERE k.id = ? LIMIT 1
+    `;
+    const rows = await withConnection((q) => q(sql, [id]));
     return rows[0] || null;
   } catch (error) {
     console.error("Error fetching accounting by id:", error);
@@ -70,9 +89,9 @@ async function getBalanceByType(tipe) {
   const where = tipe ? "WHERE tipe_keuangan = ?" : "";
   const params = tipe ? [tipe] : [];
   const sql = `
-    SELECT 
-      IFNULL(SUM(uang_masuk),0) AS total_masuk,
-      IFNULL(SUM(uang_keluar),0) AS total_keluar,
+    SELECT
+      IFNULL(SUM(uang_masuk), 0) AS total_masuk,
+      IFNULL(SUM(uang_keluar), 0) AS total_keluar,
       IFNULL(SUM(uang_masuk) - SUM(uang_keluar), 0) AS balance
     FROM \`${TABLE}\`
     ${where}
@@ -87,22 +106,11 @@ async function getBalanceByType(tipe) {
 }
 
 async function create(record) {
-  try {
-    const amountIn = Number(record.uang_masuk) || 0;
-    const amountOut = Number(record.uang_keluar) || 0;
-    const tipe = record.tipe_keuangan || null;
+  const amountIn = Number(record.uang_masuk) || 0;
+  const amountOut = Number(record.uang_keluar) || 0;
+  const tipe = record.tipe_keuangan || null;
 
-    if (amountOut > 0 && tipe) {
-      const bal = await getBalanceByType(tipe);
-      if (bal.balance < amountOut) {
-        const err = new Error(
-          `Saldo tidak cukup untuk tipe '${tipe}'. Saldo saat ini: ${bal.balance}`
-        );
-        err.code = "INSUFFICIENT_FUNDS";
-        throw err;
-      }
-    }
-
+  if (!tipe) {
     const fields = [
       "uang_masuk",
       "uang_keluar",
@@ -117,7 +125,7 @@ async function create(record) {
       amountOut,
       record.tanggal_uang_masuk || null,
       record.tanggal_uang_keluar || null,
-      tipe,
+      null,
       record.keterangan || null,
       record.created_at || new Date(),
     ];
@@ -125,12 +133,82 @@ async function create(record) {
     const sql = `INSERT INTO \`${TABLE}\` (${fields.join(
       ", "
     )}) VALUES (${placeholders})`;
-    const res = await withConnection((q) => q(sql, values));
-    return { insertId: res.insertId, affectedRows: res.affectedRows };
-  } catch (error) {
-    console.error("Error creating accounting record:", error);
-    throw error;
+    try {
+      const res = await withConnection((q) => q(sql, values));
+      return { insertId: res.insertId, affectedRows: res.affectedRows };
+    } catch (err) {
+      console.error("Error creating accounting record (no tipe):", err);
+      throw err;
+    }
   }
+
+  return await withConnection(async (q, helpers) => {
+    const { beginTransaction, commit, rollback } = helpers;
+    try {
+      await beginTransaction();
+
+      const lockRows = await q(
+        `SELECT id FROM \`${TYPE_TABLE}\` WHERE id = ? FOR UPDATE`,
+        [tipe]
+      );
+      if (!lockRows.length) {
+        await rollback();
+        const e = new Error(`Tipe keuangan with id ${tipe} not found`);
+        e.code = "INVALID_TYPE";
+        throw e;
+      }
+
+      const balRows = await q(
+        `SELECT IFNULL(SUM(uang_masuk),0) AS total_masuk, IFNULL(SUM(uang_keluar),0) AS total_keluar, IFNULL(SUM(uang_masuk) - SUM(uang_keluar),0) AS balance FROM \`${TABLE}\` WHERE tipe_keuangan = ?`,
+        [tipe]
+      );
+      const bal = balRows[0] || { balance: 0 };
+
+      if (amountOut > 0 && bal.balance < amountOut) {
+        await rollback();
+        const err = new Error(
+          `Saldo tidak cukup untuk tipe '${tipe}'. Saldo saat ini: ${bal.balance}`
+        );
+        err.code = "INSUFFICIENT_FUNDS";
+        err.balance = Number(bal.balance);
+        throw err;
+      }
+
+      const fields = [
+        "uang_masuk",
+        "uang_keluar",
+        "tanggal_uang_masuk",
+        "tanggal_uang_keluar",
+        "tipe_keuangan",
+        "keterangan",
+        "created_at",
+      ];
+      const values = [
+        amountIn,
+        amountOut,
+        record.tanggal_uang_masuk || null,
+        record.tanggal_uang_keluar || null,
+        tipe,
+        record.keterangan || null,
+        record.created_at || new Date(),
+      ];
+      const placeholders = fields.map(() => "?").join(", ");
+      const insertSql = `INSERT INTO \`${TABLE}\` (${fields.join(
+        ", "
+      )}) VALUES (${placeholders})`;
+      const res = await q(insertSql, values);
+
+      await commit();
+      return { insertId: res.insertId, affectedRows: res.affectedRows };
+    } catch (err) {
+      try {
+        await rollback();
+      } catch (e) {
+      }
+      console.error("Error creating accounting record (tx):", err);
+      throw err;
+    }
+  });
 }
 
 async function update(id, record) {
