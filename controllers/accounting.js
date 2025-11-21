@@ -92,6 +92,27 @@ async function getTotalsByType(req, res) {
   }
 }
 
+async function exportData(req, res) {
+  try {
+    const options = {
+      tipe: req.query.tipe,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      search: req.query.search
+    };
+    const csv = await service.exportCsv(options);
+    const tipeLabel = options.tipe ? `tipe-${options.tipe}` : "all";
+    const filename = `keuangan_${tipeLabel}_${Date.now()}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(csv);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getAll,
   getById,
@@ -99,5 +120,6 @@ module.exports = {
   update,
   remove,
   getTotals,
-  getTotalsByType
+  getTotalsByType,
+  exportData,
 };

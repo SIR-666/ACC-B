@@ -23,4 +23,7 @@ router.put("/:id", ctrl.update);
 // DELETE /api/accounting/:id     
 router.delete("/:id", ctrl.remove);
 
+// GET /api/accounting/export
+router.get("/export", ctrl.exportData);
+
 module.exports = router;

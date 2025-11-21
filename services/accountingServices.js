@@ -237,6 +237,84 @@ async function getTotalsByType(tipe) {
   };
 }
 
+async function exportCsv(options = {}) {
+  const where = [];
+  const params = [];
+
+  if (options.tipe) {
+    where.push("k.tipe_keuangan = ?");
+    params.push(options.tipe);
+  }
+  if (options.startDate) {
+    where.push("(k.tanggal_uang_masuk >= ? OR k.tanggal_uang_keluar >= ?)");
+    params.push(options.startDate, options.startDate);
+  }
+  if (options.endDate) {
+    where.push("(k.tanggal_uang_masuk <= ? OR k.tanggal_uang_keluar <= ?)");
+    params.push(options.endDate, options.endDate);
+  }
+  if (options.search) {
+    where.push("(k.keterangan LIKE ?)");
+    params.push(`%${options.search}%`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const sql = `
+    SELECT 
+      k.id,
+      k.uang_masuk,
+      k.uang_keluar,
+      k.tanggal_uang_masuk,
+      k.tanggal_uang_keluar,
+      k.tipe_keuangan,
+      t.tipe AS tipe_label,
+      k.keterangan,
+      k.created_at
+    FROM \`${TABLE}\` k
+    LEFT JOIN \`${TYPE_TABLE}\` t ON k.tipe_keuangan = t.id
+    ${whereSql}
+    ORDER BY k.created_at DESC
+  `;
+
+  const rows = await withConnection((q) => q(sql, params));
+
+  // CSV generation
+  const headers = [
+    "id",
+    "uang_masuk",
+    "uang_keluar",
+    "tanggal_uang_masuk",
+    "tanggal_uang_keluar",
+    "tipe_keuangan",
+    "tipe_label",
+    "keterangan",
+    "created_at",
+  ];
+
+  const escape = (v) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (
+      s.includes('"') ||
+      s.includes(",") ||
+      s.includes("\n") ||
+      s.includes("\r")
+    ) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const lines = [headers.join(",")];
+  for (const r of rows) {
+    const line = headers.map((h) => escape(r[h])).join(",");
+    lines.push(line);
+  }
+
+  return lines.join("\r\n");
+}
+
 module.exports = {
   getAll,
   getById,
@@ -246,4 +324,5 @@ module.exports = {
   getTotals,
   getTotalsByType,
   getBalanceByType,
+  exportCsv,
 };
