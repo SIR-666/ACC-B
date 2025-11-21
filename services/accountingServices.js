@@ -92,17 +92,17 @@ async function getBalanceByType(tipe) {
     SELECT
       IFNULL(SUM(uang_masuk), 0) AS total_masuk,
       IFNULL(SUM(uang_keluar), 0) AS total_keluar,
-      IFNULL(SUM(uang_masuk) - SUM(uang_keluar), 0) AS balance
+      (IFNULL(SUM(uang_masuk),0) - IFNULL(SUM(uang_keluar),0)) AS balance
     FROM \`${TABLE}\`
     ${where}
   `;
-  try {
-    const rows = await withConnection((q) => q(sql, params));
-    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
-  } catch (error) {
-    console.error("Error fetching balance by type:", error);
-    throw error;
-  }
+  const rows = await withConnection((q) => q(sql, params));
+  const r = rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
+  return {
+    total_masuk: Number(r.total_masuk) || 0,
+    total_keluar: Number(r.total_keluar) || 0,
+    balance: Number(r.balance) || 0,
+  };
 }
 
 async function create(record) {
@@ -185,58 +185,56 @@ async function remove(id) {
 }
 
 async function getTotals(options = {}) {
-  try {
-    const where = [];
-    const params = [];
+  const where = [];
+  const params = [];
 
-    if (options.tipe) {
-      where.push("tipe_keuangan = ?");
-      params.push(options.tipe);
-    }
-    if (options.startDate) {
-      where.push("(tanggal_uang_masuk >= ? OR tanggal_uang_keluar >= ?)");
-      params.push(options.startDate, options.startDate);
-    }
-    if (options.endDate) {
-      where.push("(tanggal_uang_masuk <= ? OR tanggal_uang_keluar <= ?)");
-      params.push(options.endDate, options.endDate);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const sql = `
-      SELECT
-        IFNULL(SUM(uang_masuk),0) AS total_masuk,
-        IFNULL(SUM(uang_keluar),0) AS total_keluar,
-        IFNULL(SUM(uang_masuk) - SUM(uang_keluar),0) AS balance
-      FROM \`${TABLE}\`
-      ${whereSql}
-    `;
-    const rows = await withConnection((q) => q(sql, params));
-    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
-  } catch (error) {
-    console.error("Error fetching totals:", error);
-    throw error;
+  if (options.tipe) {
+    where.push("tipe_keuangan = ?");
+    params.push(options.tipe);
   }
+  if (options.startDate) {
+    where.push("(tanggal_uang_masuk >= ? OR tanggal_uang_keluar >= ?)");
+    params.push(options.startDate, options.startDate);
+  }
+  if (options.endDate) {
+    where.push("(tanggal_uang_masuk <= ? OR tanggal_uang_keluar <= ?)");
+    params.push(options.endDate, options.endDate);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const sql = `
+    SELECT
+      IFNULL(SUM(uang_masuk),0) AS total_masuk,
+      IFNULL(SUM(uang_keluar),0) AS total_keluar,
+      (IFNULL(SUM(uang_masuk),0) - IFNULL(SUM(uang_keluar),0)) AS balance
+    FROM \`${TABLE}\`
+    ${whereSql}
+  `;
+  const rows = await withConnection((q) => q(sql, params));
+  const r = rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
+  return {
+    total_masuk: Number(r.total_masuk) || 0,
+    total_keluar: Number(r.total_keluar) || 0,
+    balance: Number(r.balance) || 0,
+  };
 }
 
 async function getTotalsByType(tipe) {
-  try {
-    const rows = await withConnection((q) =>
-      q(
-        `SELECT
-           IFNULL(SUM(uang_masuk),0) AS total_masuk,
-           IFNULL(SUM(uang_keluar),0) AS total_keluar,
-           IFNULL(SUM(uang_masuk) - SUM(uang_keluar),0) AS balance
-         FROM \`${TABLE}\`
-         WHERE tipe_keuangan = ?`,
-        [tipe]
-      )
-    );
-    return rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
-  } catch (error) {
-    console.error("Error fetching totals by type:", error);
-    throw error;
-  }
+  const sql = `
+    SELECT
+      IFNULL(SUM(uang_masuk),0) AS total_masuk,
+      IFNULL(SUM(uang_keluar),0) AS total_keluar,
+      (IFNULL(SUM(uang_masuk),0) - IFNULL(SUM(uang_keluar),0)) AS balance
+    FROM \`${TABLE}\`
+    WHERE tipe_keuangan = ?
+  `;
+  const rows = await withConnection((q) => q(sql, [tipe]));
+  const r = rows[0] || { total_masuk: 0, total_keluar: 0, balance: 0 };
+  return {
+    total_masuk: Number(r.total_masuk) || 0,
+    total_keluar: Number(r.total_keluar) || 0,
+    balance: Number(r.balance) || 0,
+  };
 }
 
 module.exports = {
