@@ -25,30 +25,52 @@ async function withConnection(fn) {
 
 async function getAll(options = {}) {
   const page = Number(options.page) > 0 ? Number(options.page) : 1;
-  const limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
-  const offset = (page - 1) * limit;
+  let limit = null;
 
+  if (
+    options.limit !== undefined &&
+    options.limit !== null &&
+    options.limit !== "" &&
+    String(options.limit).toLowerCase() !== "all"
+  ) {
+    limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
+  }
+
+  const offset = limit ? (page - 1) * limit : 0;
   const where = [];
   const params = [];
 
-  if (options.tipe) {
+  if (
+    options.tipe !== undefined &&
+    options.tipe !== null &&
+    options.tipe !== ""
+  ) {
     where.push("k.tipe_keuangan = ?");
     params.push(options.tipe);
   }
+
   if (options.startDate) {
-    where.push("(k.tanggal_uang_masuk >= ? OR k.tanggal_uang_keluar >= ?)");
+    where.push(
+      "((k.tanggal_uang_masuk IS NOT NULL AND k.tanggal_uang_masuk >= ?) OR (k.tanggal_uang_keluar IS NOT NULL AND k.tanggal_uang_keluar >= ?))"
+    );
     params.push(options.startDate, options.startDate);
   }
   if (options.endDate) {
-    where.push("(k.tanggal_uang_masuk <= ? OR k.tanggal_uang_keluar <= ?)");
+    where.push(
+      "((k.tanggal_uang_masuk IS NOT NULL AND k.tanggal_uang_masuk <= ?) OR (k.tanggal_uang_keluar IS NOT NULL AND k.tanggal_uang_keluar <= ?))"
+    );
     params.push(options.endDate, options.endDate);
   }
+
   if (options.search) {
     where.push("(k.keterangan LIKE ?)");
     params.push(`%${options.search}%`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const limitSql = limit ? "LIMIT ? OFFSET ?" : "";
+
+  if (limit) params.push(limit, offset);
 
   const sql = `
     SELECT k.*, t.tipe AS tipe_label
@@ -56,9 +78,8 @@ async function getAll(options = {}) {
     LEFT JOIN \`${TYPE_TABLE}\` t ON k.tipe_keuangan = t.id
     ${whereSql}
     ORDER BY k.created_at DESC
-    LIMIT ? OFFSET ?
+    ${limitSql}
   `;
-  params.push(limit, offset);
 
   try {
     const rows = await withConnection((q) => q(sql, params));
